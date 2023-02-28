@@ -1,6 +1,12 @@
 import numpy as np
 import cv2
 from keras.models import model_from_json
+import pika
+import sys
+import os
+
+FOURTH_PYTHON_QUEUE = "FOURTH_PYTHON_QUEUE"
+FIFTH_PYTHON_QUEUE = "FIFTH_PYTHON_QUEUE"
 
 class_names = {
     0: '0',
@@ -15,8 +21,9 @@ class_names = {
     9: '9',
     10: 'BA',
     11: 'PA',
-    12: 'CA'
+    12: 'CA',
 }
+
 no_of_classes = 13
 
 
@@ -59,7 +66,42 @@ def classify_character(image):
     return class_id
 
 
-image = cv2.imread("ba.png")
-class_id = classify_character(image)
-print(f"Class ID: {class_id}")
-print(f"Detected character is : {class_names[class_id]}")
+def main():
+    connection = pika.BlockingConnection(
+        pika.ConnectionParameters(host='localhost'))
+    channel = connection.channel()
+
+    channel.queue_declare(queue=FOURTH_PYTHON_QUEUE)
+
+    def callback(ch, method, properties, body):
+        folder_path = "../characters/" + str(body.decode())
+        files = os.listdir(folder_path)
+
+        number_plate_characters = ""
+
+        for file in files:
+            image = cv2.imread(os.path.join(folder_path, file))
+            class_id = classify_character(image)
+            number_plate_characters = number_plate_characters + \
+                " " + class_names[class_id]
+
+        channel.basic_publish(
+            exchange='', routing_key=FIFTH_PYTHON_QUEUE, body=number_plate_characters)
+        print(" [x] Sent " + number_plate_characters)
+
+    channel.basic_consume(queue=FOURTH_PYTHON_QUEUE,
+                          on_message_callback=callback, auto_ack=True)
+
+    print(' [*] Waiting for messages. To exit press CTRL+C')
+    channel.start_consuming()
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except KeyboardInterrupt:
+        print('Interrupted')
+        try:
+            sys.exit(0)
+        except SystemExit:
+            os._exit(0)
